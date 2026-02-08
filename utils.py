@@ -11,11 +11,7 @@ from tqdm import tqdm
 
 
 class ModelEMA:
-    """
-    [Exponential Moving Average]
-    학습 중 파라미터의 이동 평균을 유지하여,
-    최종 추론 시 더 안정적이고 일반화된 성능을 제공합니다.
-    """
+    """Exponential Moving Average"""
 
     def __init__(self, model, decay=0.999):
         self.decay = decay
@@ -31,21 +27,18 @@ class ModelEMA:
     def update(self, model):
         for name, param in model.named_parameters():
             if param.requires_grad:
-                # new_avg = (1 - decay) * current + decay * old_avg
                 new_average = (
                     1.0 - self.decay
                 ) * param.data + self.decay * self.shadow[name]
                 self.shadow[name] = new_average.clone()
 
     def apply_shadow(self, model):
-        """검증 전 호출: EMA 가중치를 모델에 덮어씌움"""
         for name, param in model.named_parameters():
             if param.requires_grad:
-                self.backup[name] = param.data.clone()  # 원본 백업
-                param.data.copy_(self.shadow[name])  # EMA 적용
+                self.backup[name] = param.data.clone()
+                param.data.copy_(self.shadow[name])
 
     def restore(self, model):
-        """검증 후 호출: 원본 가중치 복구"""
         for name, param in model.named_parameters():
             if param.requires_grad:
                 if name in self.backup:
@@ -54,21 +47,23 @@ class ModelEMA:
 
 
 def seed_everything(seed=42):
-    """재현성을 위한 시드 고정"""
     random.seed(seed)
     os.environ["PYTHONHASHSEED"] = str(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
-    # cudnn.benchmark = True와 deterministic은 충돌할 수 있으나,
-    # 시드 고정은 최소한의 안전장치입니다.
-    # torch.backends.cudnn.deterministic = True (속도를 위해 생략 가능)
 
 
-def get_logger(log_dir):
-    """콘솔 + 파일 로거"""
-    logger = logging.getLogger("BakeTrain")
+def get_logger(log_dir, log_filename="train.log"):
+    """
+    콘솔 + 파일 로거
+    - log_filename: train.log 또는 inference.log 등으로 변경 가능
+    """
+    # 로거 이름을 파일명에 따라 다르게 주어 중복 방지
+    logger_name = f"Bake_{os.path.splitext(log_filename)[0]}"
+    logger = logging.getLogger(logger_name)
     logger.setLevel(logging.INFO)
+
     if logger.hasHandlers():
         return logger
 
@@ -82,7 +77,8 @@ def get_logger(log_dir):
     logger.addHandler(stream_handler)
 
     # File
-    file_path = os.path.join(log_dir, "train.log")
+    os.makedirs(log_dir, exist_ok=True)  # 폴더가 없으면 생성
+    file_path = os.path.join(log_dir, log_filename)
     file_handler = logging.FileHandler(file_path, mode="a")
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
@@ -91,30 +87,12 @@ def get_logger(log_dir):
 
 
 def quantize_validation(tensor, bit_depth=3):
-    """
-    [Validation Only]
-    검증 시 성능 측정을 위해 고정된 3-bit 양자화를 적용
-    (디더링 없이 순수 양자화로 성능 측정)
-    """
     steps = (2**bit_depth) - 1
     quantized = torch.round(tensor * steps) / steps
     return quantized.clamp(0.0, 1.0)
 
 
 def compute_delta_e(pred_oklabp, target_oklabp):
-    """
-    [Delta E Metric]
-    OklabP (Processing Scale) -> Standard Oklab -> Euclidean Distance
-
-    OklabP: Lp [-1, 1], ap/bp [Large]
-    Std Oklab: L [0, 1], a/b [Small]
-
-    Conversion:
-      L = (Lp + 1) / 2
-      a = ap / 2
-      b = bp / 2
-    """
-    # 1. Re-scale to Standard Oklab
     L_pred = (pred_oklabp[:, 0] + 1.0) * 0.5
     a_pred = pred_oklabp[:, 1] * 0.5
     b_pred = pred_oklabp[:, 2] * 0.5
@@ -123,22 +101,17 @@ def compute_delta_e(pred_oklabp, target_oklabp):
     a_tgt = target_oklabp[:, 1] * 0.5
     b_tgt = target_oklabp[:, 2] * 0.5
 
-    # 2. Euclidean Distance (Perceptual Difference)
     delta_L = L_pred - L_tgt
     delta_a = a_pred - a_tgt
     delta_b = b_pred - b_tgt
 
-    # Delta E = sqrt(dL^2 + da^2 + db^2)
     delta_e = torch.sqrt(delta_L**2 + delta_a**2 + delta_b**2 + 1e-8)
-
-    # Batch Mean
     return delta_e.mean()
 
 
 def save_checkpoint(
     config, epoch, model, model_ema, optimizer, scheduler, is_best=False
 ):
-    """Last & Best 저장 전략"""
     state = {
         "epoch": epoch,
         "model_state_dict": model.state_dict(),
@@ -146,23 +119,17 @@ def save_checkpoint(
         "optimizer_state_dict": optimizer.state_dict(),
         "scheduler_state_dict": scheduler.state_dict(),
     }
-
-    # Always save 'last.pth' (Overwrite)
     last_path = config.LAST_CKPT_PATH
     torch.save(state, last_path)
-
-    # If best, copy 'last.pth' to 'best.pth'
     if is_best:
         best_path = os.path.join(config.CHECKPOINT_DIR, "best.pth")
         shutil.copyfile(last_path, best_path)
 
 
 def download_file(url, save_path):
-    """파일 다운로드 (Progress Bar 포함)"""
     response = requests.get(url, stream=True)
     total_size = int(response.headers.get("content-length", 0))
     block_size = 1024
-
     with open(save_path, "wb") as file, tqdm(
         desc=os.path.basename(save_path),
         total=total_size,
@@ -176,36 +143,27 @@ def download_file(url, save_path):
 
 
 def prepare_div2k_dataset(config, logger):
-    """
-    DIV2K 데이터셋 자동 다운로드 및 압축 해제
-    """
     urls = {
         "train": "http://data.vision.ee.ethz.ch/cvl/DIV2K/DIV2K_train_HR.zip",
         "valid": "http://data.vision.ee.ethz.ch/cvl/DIV2K/DIV2K_valid_HR.zip",
     }
-
-    # 디렉토리 생성
     os.makedirs(config.DATA_DIR, exist_ok=True)
 
-    # Train Set Check
     if not os.path.exists(config.DIV2K_TRAIN_ROOT):
         logger.info("DIV2K Train dataset not found. Downloading...")
         zip_path = os.path.join(config.DATA_DIR, "DIV2K_train_HR.zip")
-
         try:
             download_file(urls["train"], zip_path)
             logger.info("Extracting Train Set...")
             with ZipFile(zip_path, "r") as zip_ref:
                 zip_ref.extractall(config.DATA_DIR)
-            os.remove(zip_path)  # 압축파일 삭제
+            os.remove(zip_path)
         except Exception as e:
             logger.error(f"Failed to download Train set: {e}")
 
-    # Valid Set Check
     if not os.path.exists(config.DIV2K_VALID_ROOT):
         logger.info("DIV2K Valid dataset not found. Downloading...")
         zip_path = os.path.join(config.DATA_DIR, "DIV2K_valid_HR.zip")
-
         try:
             download_file(urls["valid"], zip_path)
             logger.info("Extracting Valid Set...")
@@ -214,5 +172,3 @@ def prepare_div2k_dataset(config, logger):
             os.remove(zip_path)
         except Exception as e:
             logger.error(f"Failed to download Valid set: {e}")
-
-    logger.info(f"Dataset preparation complete at {config.DATA_DIR}")
