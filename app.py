@@ -85,9 +85,9 @@ def load_model():
 
         # Load EMA if available (Preferred for inference)
         if "ema_shadow" in checkpoint:
-            model.load_state_dict(checkpoint["ema_shadow"])
+            model.load_state_dict(checkpoint["ema_shadow"], strict=False)
         else:
-            model.load_state_dict(checkpoint["model_state_dict"])
+            model.load_state_dict(checkpoint["model_state_dict"], strict=False)
 
         model.eval()
 
