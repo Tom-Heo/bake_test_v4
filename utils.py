@@ -5,6 +5,9 @@ import logging
 import torch
 import numpy as np
 import shutil
+import requests
+from zipfile import ZipFile
+from tqdm import tqdm
 
 
 class ModelEMA:
@@ -152,3 +155,64 @@ def save_checkpoint(
     if is_best:
         best_path = os.path.join(config.CHECKPOINT_DIR, "best.pth")
         shutil.copyfile(last_path, best_path)
+
+
+def download_file(url, save_path):
+    """파일 다운로드 (Progress Bar 포함)"""
+    response = requests.get(url, stream=True)
+    total_size = int(response.headers.get("content-length", 0))
+    block_size = 1024
+
+    with open(save_path, "wb") as file, tqdm(
+        desc=os.path.basename(save_path),
+        total=total_size,
+        unit="iB",
+        unit_scale=True,
+        unit_divisor=1024,
+    ) as bar:
+        for data in response.iter_content(block_size):
+            size = file.write(data)
+            bar.update(size)
+
+
+def prepare_div2k_dataset(config, logger):
+    """
+    DIV2K 데이터셋 자동 다운로드 및 압축 해제
+    """
+    urls = {
+        "train": "http://data.vision.ee.ethz.ch/cvl/DIV2K/DIV2K_train_HR.zip",
+        "valid": "http://data.vision.ee.ethz.ch/cvl/DIV2K/DIV2K_valid_HR.zip",
+    }
+
+    # 디렉토리 생성
+    os.makedirs(config.DATA_DIR, exist_ok=True)
+
+    # Train Set Check
+    if not os.path.exists(config.DIV2K_TRAIN_ROOT):
+        logger.info("DIV2K Train dataset not found. Downloading...")
+        zip_path = os.path.join(config.DATA_DIR, "DIV2K_train_HR.zip")
+
+        try:
+            download_file(urls["train"], zip_path)
+            logger.info("Extracting Train Set...")
+            with ZipFile(zip_path, "r") as zip_ref:
+                zip_ref.extractall(config.DATA_DIR)
+            os.remove(zip_path)  # 압축파일 삭제
+        except Exception as e:
+            logger.error(f"Failed to download Train set: {e}")
+
+    # Valid Set Check
+    if not os.path.exists(config.DIV2K_VALID_ROOT):
+        logger.info("DIV2K Valid dataset not found. Downloading...")
+        zip_path = os.path.join(config.DATA_DIR, "DIV2K_valid_HR.zip")
+
+        try:
+            download_file(urls["valid"], zip_path)
+            logger.info("Extracting Valid Set...")
+            with ZipFile(zip_path, "r") as zip_ref:
+                zip_ref.extractall(config.DATA_DIR)
+            os.remove(zip_path)
+        except Exception as e:
+            logger.error(f"Failed to download Valid set: {e}")
+
+    logger.info(f"Dataset preparation complete at {config.DATA_DIR}")

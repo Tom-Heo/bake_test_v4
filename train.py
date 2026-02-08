@@ -18,6 +18,7 @@ from utils import (
     save_checkpoint,
     compute_delta_e,
     quantize_validation,
+    prepare_div2k_dataset,  # <--- 추가됨
 )
 
 
@@ -34,6 +35,8 @@ def train():
         logger.info("Cudnn Benchmark Enabled.")
 
     logger.info(f"Initialize Bake Training on {device}")
+
+    prepare_div2k_dataset(Config, logger)
 
     # 2. Dataset & Loader
     train_dataset = DIV2KDataset(Config, is_train=True)
