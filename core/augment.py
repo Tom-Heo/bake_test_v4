@@ -129,7 +129,7 @@ class BakeAugment(nn.Module):
         # --- [Degradation Pipeline] ---
 
         # 1. Quantization (Bit-depth Reduction)
-        bit_depth = random.choice([2, 3, 4, 5])
+        bit_depth = random.choice([3, 4, 5, 6])
         steps = (2**bit_depth) - 1
 
         # Dithering (Noise Injection before quant)
