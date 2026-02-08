@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Data & Artifacts (GitHub 업로드 제외)
+dataset/
+checkpoints/
+logs/
+results/
+*.pth
+
+# Environment
+.env
+.venv
+env/
+venv/
+.DS_Store
