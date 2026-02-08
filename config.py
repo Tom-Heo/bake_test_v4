@@ -1,5 +1,6 @@
 import os
 
+
 class Config:
     # -------------------------------------------------------------------------
     # [Path Settings]
@@ -23,11 +24,6 @@ class Config:
     # v4 모델의 Body 연산량과 96ch Loss 메모리 부하를 고려하여 안정적인 1로 설정
     BATCH_SIZE = 1
     NUM_WORKERS = 4  # 데이터 로더 워커 수
-
-    # 데이터 손상(Degradation) 파라미터
-    # 3-bit: 극단적인 양자화 노이즈 테스트 (AI가 구조적 특징을 배우도록 유도)
-    BIT_DEPTH_INPUT = 3  
-    CHROMA_SUBSAMPLE = True  # 4:2:0 Subsampling (Oklab a, b channel)
 
     # -------------------------------------------------------------------------
     # [Model Settings]

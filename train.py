@@ -12,6 +12,7 @@ from data.dataset import DIV2KDataset
 from core.net import BakeNet
 from core.loss import BakeLoss
 from core.palette import Palette
+from core.augment import BakeAugment  # [NEW] GPU Augmentation Module
 from utils import (
     seed_everything,
     get_logger,
@@ -41,13 +42,14 @@ def train(args):
     prepare_div2k_dataset(Config, logger)
 
     # 2. Dataset & Loader
+    # dataset.py 수정으로 인해 이제 CPU 부하가 매우 적습니다.
     logger.info("Loading Datasets...")
     train_dataset = DIV2KDataset(Config, is_train=True)
     valid_dataset = DIV2KDataset(Config, is_train=False)
 
     train_loader = DataLoader(
         train_dataset,
-        batch_size=Config.BATCH_SIZE,
+        batch_size=Config.BATCH_SIZE,  # Config에서 4~8로 늘리는 것을 권장
         shuffle=True,
         num_workers=Config.NUM_WORKERS,
         pin_memory=True,
@@ -64,6 +66,11 @@ def train(args):
 
     # 3. Model & Components
     logger.info(f"Initializing BakeNet (Dim: {Config.INTERNAL_DIM})...")
+
+    # [NEW] GPU Augmentor Initialize
+    # 학습 루프 내에서 고속 열화를 담당합니다.
+    augmentor = BakeAugment().to(device)
+
     model = BakeNet(dim=Config.INTERNAL_DIM).to(device)
     criterion = BakeLoss().to(device)
 
@@ -133,24 +140,31 @@ def train(args):
         logger.info(f"✅ Successfully resumed from Epoch {start_epoch-1}.")
 
     # 4. Training Loop
-    logger.info(">>> Start Training Loop <<<")
+    logger.info(">>> Start Training Loop (GPU Accelerated) <<<")
 
     for epoch in range(start_epoch, Config.TOTAL_EPOCHS + 1):
         model.train()
         epoch_loss = 0.0
 
-        for step, (input_rgb, target_rgb) in enumerate(train_loader, 1):
-            input_rgb = input_rgb.to(device)
-            target_rgb = target_rgb.to(device)
+        # [Modified] clean_batch만 받습니다. (dataset.py가 Clean Tensor만 반환)
+        for step, clean_batch in enumerate(train_loader, 1):
 
-            # Convert
+            # 1. Move to GPU immediately
+            clean_batch = clean_batch.to(device)
+
+            # 2. On-the-fly Degradation & Augmentation
+            # GPU 상에서 즉시 열화 이미지를 생성합니다.
+            with torch.no_grad():
+                input_rgb, target_rgb = augmentor(clean_batch)
+
+            # 3. Convert to OklabP
             input_oklabp = to_oklabp(input_rgb)
             target_oklabp = to_oklabp(target_rgb)
 
-            # Forward
+            # 4. Forward
             pred_oklabp = model(input_oklabp)
 
-            # Loss
+            # 5. Loss
             loss = criterion(pred_oklabp, target_oklabp)
 
             # Safety
@@ -196,11 +210,12 @@ def train(args):
             vis_input, vis_pred, vis_target = None, None, None
 
             with torch.no_grad():
-                for v_step, (v_clean_rgb, v_tgt_rgb) in enumerate(valid_loader):
-                    v_clean_rgb = v_clean_rgb.to(device)
+                # [Modified] Validation Loader도 Clean Tensor 하나만 반환합니다.
+                for v_step, v_tgt_rgb in enumerate(valid_loader):
                     v_tgt_rgb = v_tgt_rgb.to(device)
 
-                    # Validation Degradation (3-bit)
+                    # Validation은 고정된 3-bit 열화를 적용 (일관된 평가를 위해)
+                    v_clean_rgb = v_tgt_rgb  # 원본
                     v_in_rgb = quantize_validation(v_clean_rgb, bit_depth=3)
 
                     v_in_oklabp = to_oklabp(v_in_rgb)
