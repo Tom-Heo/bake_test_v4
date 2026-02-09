@@ -59,7 +59,7 @@ class BakeAugment(nn.Module):
         b = y + 1.772 * cb
         return torch.stack([r, g, b], dim=1)
 
-    def apply_jpeg(self, x, quality_range=(20, 80)):
+    def apply_jpeg(self, x, quality_range=(20, 40)):
         """Differentiable JPEG Artifact Simulator"""
         B, C, H, W = x.shape
 
@@ -72,7 +72,27 @@ class BakeAugment(nn.Module):
         # 2. RGB -> YCbCr
         x_yuv = self._rgb_to_ycbcr(x)
 
-        # 3. Block Process (DCT)
+        # 3. 4:2:0 Chroma Subsampling Simulation
+        # ==========================================
+        # Y(0번 채널)는 건드리지 않고, Cb/Cr(1,2번 채널)만 해상도를 반으로 줄였다가 억지로 늘립니다.
+
+        y = x_yuv[:, 0:1, :, :]
+        cbcr = x_yuv[:, 1:3, :, :]
+
+        # Downsample (Average Pooling으로 정보 손실 유도)
+        cbcr_down = F.avg_pool2d(cbcr, kernel_size=2, stride=2)
+
+        # Upsample (Nearest or Bilinear로 깍두기 혹은 번짐 현상 유도)
+        # JPEG의 블록 현상을 강조하려면 'nearest', 부드러운 번짐을 원하면 'bilinear'
+        cbcr_up = F.interpolate(
+            cbcr_down, size=(x_yuv.shape[2], x_yuv.shape[3]), mode="nearest"
+        )
+
+        # 다시 합치기 (이제 색상 정보는 1/4만 남았습니다)
+        x_yuv = torch.cat([y, cbcr_up], dim=1)
+        # ==========================================
+
+        # 4. Block Process (DCT)
         # Unfold: (B, 3, H, W) -> (B, 3, H/8, W/8, 8, 8)
         patches = x_yuv.unfold(2, 8, 8).unfold(3, 8, 8)
 
@@ -81,7 +101,7 @@ class BakeAugment(nn.Module):
             "ij,bcxyjk,kl->bcxyil", self.dct_matrix, patches, self.idct_matrix
         )
 
-        # 4. Quantization
+        # 5. Quantization
         quality = random.uniform(*quality_range)
         scale = 50.0 / quality if quality < 50 else 2.0 - quality * 0.02
 
@@ -90,12 +110,12 @@ class BakeAugment(nn.Module):
         q_table = self.y_table.view(1, 1, 1, 1, 8, 8).to(x.device) * scale
         dct_quant = torch.round(dct_patches / (q_table + 1e-5)) * (q_table + 1e-5)
 
-        # 5. IDCT Transform
+        # 6. IDCT Transform
         rec_patches = torch.einsum(
             "ij,bcxyjk,kl->bcxyil", self.idct_matrix, dct_quant, self.dct_matrix
         )
 
-        # 6. Reconstruct
+        # 7. Reconstruct
         # Permute & Reshape back to image
         rec_yuv = rec_patches.permute(0, 1, 2, 4, 3, 5).reshape(
             B, 3, x_yuv.shape[2] + pad_h, x_yuv.shape[3] + pad_w
@@ -104,7 +124,7 @@ class BakeAugment(nn.Module):
             :, :, : x_yuv.shape[2], : x_yuv.shape[3]
         ]  # Ensure strict shape match before resize if needed, actually simple reshape is fine if dimensions match
 
-        # 7. YCbCr -> RGB
+        # 8. YCbCr -> RGB
         out = self._ycbcr_to_rgb(rec_yuv)
 
         return out[:, :, :H, :W].clamp(0, 1)
@@ -129,7 +149,7 @@ class BakeAugment(nn.Module):
         # --- [Degradation Pipeline] ---
 
         # 1. Quantization (Bit-depth Reduction)
-        bit_depth = random.choice([3, 4, 5, 6])
+        bit_depth = random.choice([4, 5, 6])
         steps = (2**bit_depth) - 1
 
         # Dithering (Noise Injection before quant)

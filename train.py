@@ -214,9 +214,9 @@ def train(args):
                 for v_step, v_tgt_rgb in enumerate(valid_loader):
                     v_tgt_rgb = v_tgt_rgb.to(device)
 
-                    # Validation은 고정된 3-bit 열화를 적용 (일관된 평가를 위해)
+                    # Validation은 고정된 4-bit 열화를 적용 (일관된 평가를 위해)
                     v_clean_rgb = v_tgt_rgb  # 원본
-                    v_in_rgb = quantize_validation(v_clean_rgb, bit_depth=3)
+                    v_in_rgb = quantize_validation(v_clean_rgb, bit_depth=4)
 
                     v_in_oklabp = to_oklabp(v_in_rgb)
                     v_tgt_oklabp = to_oklabp(v_tgt_rgb)
