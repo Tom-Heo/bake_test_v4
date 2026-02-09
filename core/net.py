@@ -84,7 +84,4 @@ class BakeNet(nn.Module):
             feat = self.residual_gates[i](nemo_out, gated_input)
 
         # D. Head & Global Residual
-        # return x + 0.2 * self.head(feat)
-
-        # test
-        return self.head(feat)
+        return x + 0.2 * self.head(feat)
