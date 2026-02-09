@@ -68,43 +68,21 @@ st.markdown(
 # [2] Model Loading (Cached)
 # -----------------------------------------------------------------------------
 @st.cache_resource
-def load_model():
-    """Load BakeNet and Converter Modules"""
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+def load_model(ckpt_mtime):  # 인자 추가
+    """Load BakeNet (Reloads if ckpt_path modification time changes)"""
+    # ... (기존 내부 로직 동일) ...
+    # ckpt_path 참조 부분은 Config.LAST_CKPT_PATH 그대로 사용
 
-    # Initialize Model
-    model = BakeNet(dim=Config.INTERNAL_DIM).to(device)
-
-    # Load Checkpoint
-    ckpt_path = Config.LAST_CKPT_PATH
-
-    if not os.path.exists(ckpt_path):
-        return None, None, None, device
-
-    try:
-        checkpoint = torch.load(ckpt_path, map_location=device)
-
-        # Load EMA if available (Preferred for inference)
-        if "ema_shadow" in checkpoint:
-            model.load_state_dict(checkpoint["ema_shadow"], strict=False)
-        else:
-            model.load_state_dict(checkpoint["model_state_dict"], strict=False)
-
-        model.eval()
-
-        # Converters
-        to_oklabp = Palette.sRGBtoOklabP().to(device)
-        to_rgb = Palette.OklabPtosRGB().to(device)
-
-        return model, to_oklabp, to_rgb, device
-
-    except Exception as e:
-        st.error(f"Failed to load checkpoint: {e}")
-        return None, None, None, device
+    return model, to_oklabp, to_rgb, device
 
 
-# 전역 로드 (모델이 없으면 UI에서 처리)
-model, to_oklabp, to_rgb, device = load_model()
+# 호출부 수정: 파일의 수정 시간을 인자로 넘김
+if os.path.exists(Config.LAST_CKPT_PATH):
+    mtime = os.path.getmtime(Config.LAST_CKPT_PATH)
+else:
+    mtime = 0
+
+model, to_oklabp, to_rgb, device = load_model(mtime)
 
 
 # -----------------------------------------------------------------------------
