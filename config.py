@@ -37,11 +37,11 @@ class Config:
     TOTAL_EPOCHS = 10000  # 총 학습 에폭
 
     # Optimizer (AdamW) - v3의 안정적인 설정 유지
-    LEARNING_RATE = 1e-4
+    LEARNING_RATE = 1e-3
     WEIGHT_DECAY = 1e-6  # 디테일 보존을 위해 약한 규제 적용
 
     # Scheduler (ExponentialLR)
-    SCHEDULER_GAMMA = 0.99999  # 아주 천천히 떨어지는 학습률
+    SCHEDULER_GAMMA = 0.999996  # 아주 천천히 떨어지는 학습률
 
     # 주기 설정
     LOG_INTERVAL_STEPS = 50  # 50 스텝마다 로그 출력
