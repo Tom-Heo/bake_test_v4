@@ -85,7 +85,6 @@ def load_model():
         checkpoint = torch.load(ckpt_path, map_location=device)
 
         # Load EMA if available (Preferred for inference)
-        # strict=False 옵션을 유지하여 유연한 로딩 지원
         if "ema_shadow" in checkpoint:
             model.load_state_dict(checkpoint["ema_shadow"], strict=False)
         else:
@@ -114,7 +113,7 @@ model, to_oklabp, to_rgb, device = load_model()
 def process_image(uploaded_file, bit_depth_option, model, to_oklabp, to_rgb, device):
     """
     [Inference Pipeline]
-    Load -> Normalize -> Pad -> BakeNet -> Unpad -> Output
+    Load -> Normalize -> Upscale(x2 Nearest) -> Pad -> BakeNet -> Unpad -> Output
     """
     bytes_data = uploaded_file.getvalue()
     filename = uploaded_file.name
@@ -167,7 +166,16 @@ def process_image(uploaded_file, bit_depth_option, model, to_oklabp, to_rgb, dev
     input_tensor = torch.from_numpy(img_float).permute(2, 0, 1).unsqueeze(0).to(device)
     input_tensor = input_tensor.clamp(0.0, 1.0)
 
+    # -------------------------------------------------------------------------
+    # [Upscaling] x2 Nearest Neighbor
+    # -------------------------------------------------------------------------
+    # BakeNet 입력 전에 2배 확대를 수행하여, 결과물 해상도도 2배가 되도록 함.
+    input_tensor = F.interpolate(input_tensor, scale_factor=2, mode="nearest")
+    detected_msg += " | x2 Upscaled"
+    # -------------------------------------------------------------------------
+
     # 3. Padding (Reflect for even dims)
+    # Upscaling 이후의 해상도를 기준으로 패딩 계산
     _, _, h, w = input_tensor.shape
     pad_h = 1 if (h % 2 != 0) else 0
     pad_w = 1 if (w % 2 != 0) else 0
@@ -187,6 +195,7 @@ def process_image(uploaded_file, bit_depth_option, model, to_oklabp, to_rgb, dev
     # 패딩된 부분 잘라내기
     output_rgb = output_rgb[:, :, :h, :w].clamp(0.0, 1.0)
 
+    # input_tensor 역시 2배 확대된 상태로 반환하여 비교 슬라이더의 1:1 매칭 보장
     return input_tensor.cpu(), output_rgb.cpu(), detected_msg
 
 
@@ -210,22 +219,20 @@ def to_download_bytes(tensor):
     img_np = tensor.squeeze(0).permute(1, 2, 0).numpy()
 
     # 2. RGB -> BGR 변환 (OpenCV는 BGR 순서를 사용)
-    # Streamlit/imageio와 달리 OpenCV는 파란색(B)이 먼저 오는 순서를 씁니다.
     img_bgr = img_np[..., ::-1]
 
     # 3. Scale to 16-bit Integer
     img_uint16 = (img_bgr * 65535.0).astype(np.uint16)
 
     # 4. Encode to PNG using OpenCV
-    # Pillow나 imageio는 16-bit RGB 저장을 제대로 지원하지 않아 에러가 나지만,
-    # OpenCV의 imencode는 이를 완벽하게 지원합니다.
     is_success, buffer = cv2.imencode(".png", img_uint16)
 
     if not is_success:
         return None
 
     # 5. Return as BytesIO
-    return io.BytesIO(buffer)
+    # buffer는 numpy array 형태이므로 tobytes()로 바이트 변환
+    return io.BytesIO(buffer.tobytes())
 
 
 # -----------------------------------------------------------------------------
@@ -263,7 +270,7 @@ with st.sidebar:
 # Main Area
 st.title("Bake")
 st.markdown("#### Accurate, therefore beautiful.")
-st.markdown("AI-Powered 10-bit/12-bit Color Restoration for Independent Filmmakers")
+st.markdown("AI-Powered 10-bit/12-bit Color Restoration (with x2 Upscaling)")
 st.markdown("---")
 
 uploaded_file = st.file_uploader(
@@ -289,7 +296,7 @@ if uploaded_file is not None:
 
                 # A. Comparison Slider
                 st.subheader("Before / After Comparison")
-                st.caption("Slide to see the restored gradients (Web preview is 8-bit)")
+                st.caption("Slide to see the restored gradients (x2 Upscaled View)")
 
                 img_before = to_display_image(input_t)
                 img_after = to_display_image(output_t)
@@ -298,7 +305,7 @@ if uploaded_file is not None:
                 image_comparison(
                     img1=img_before,
                     img2=img_after,
-                    label1="Original (Input)",
+                    label1="Original (x2 Nearest)",
                     label2="Baked (Restored)",
                     width=700,
                     starting_position=50,
@@ -312,11 +319,12 @@ if uploaded_file is not None:
                 # B. Download Section
                 st.subheader("Export Result")
 
-                col1, col2 = st.columns([1, 2])
+                # 컬럼을 나누어 원본(Upscaled)과 결과물 모두 다운로드 가능하게 배치
+                col1, col2, col3 = st.columns([1, 1, 2])
 
                 with col1:
                     st.download_button(
-                        label="⬇️ Download 16-bit PNG",
+                        label="⬇️ Download Output",
                         data=to_download_bytes(output_t),
                         file_name="bake_result_16bit.png",
                         mime="image/png",
@@ -324,9 +332,18 @@ if uploaded_file is not None:
                     )
 
                 with col2:
+                    st.download_button(
+                        label="⬇️ Download Input",
+                        data=to_download_bytes(input_t),
+                        file_name="bake_input_nearest_16bit.png",
+                        mime="image/png",
+                        use_container_width=True,
+                    )
+
+                with col3:
                     st.info(
-                        "**Professional Export:** The downloaded file is a **16-bit PNG**. "
-                        "It contains the full high-precision color data recovered by BakeNet."
+                        "**Professional Export:** Both files are **16-bit PNGs** (x2 Upscaled). "
+                        "'Input' is Nearest-Neighbor scaled, 'Output' is BakeNet restored."
                     )
 
             else:
