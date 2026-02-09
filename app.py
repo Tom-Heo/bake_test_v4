@@ -4,6 +4,7 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 import imageio.v3 as iio
+import cv2  # [필수] 16-bit PNG 저장을 위해 OpenCV 추가
 import streamlit as st
 from PIL import Image
 from streamlit_image_comparison import image_comparison
@@ -84,6 +85,7 @@ def load_model():
         checkpoint = torch.load(ckpt_path, map_location=device)
 
         # Load EMA if available (Preferred for inference)
+        # strict=False 옵션을 유지하여 유연한 로딩 지원
         if "ema_shadow" in checkpoint:
             model.load_state_dict(checkpoint["ema_shadow"], strict=False)
         else:
@@ -202,17 +204,28 @@ def to_download_bytes(tensor):
     """
     [For Download]
     Tensor(0~1) -> 16-bit PNG Bytes
-    사용자에게는 무손실 16비트 결과물을 제공
+    사용자에게는 무손실 16비트 결과물을 제공 (OpenCV 사용)
     """
+    # 1. Tensor (1, 3, H, W) -> Numpy (H, W, 3)
     img_np = tensor.squeeze(0).permute(1, 2, 0).numpy()
-    # Scale to 16-bit
-    img_uint16 = (img_np * 65535.0).astype(np.uint16)
 
-    # Write to BytesIO buffer
-    buf = io.BytesIO()
-    iio.imwrite(buf, img_uint16, extension=".png")
-    buf.seek(0)
-    return buf
+    # 2. RGB -> BGR 변환 (OpenCV는 BGR 순서를 사용)
+    # Streamlit/imageio와 달리 OpenCV는 파란색(B)이 먼저 오는 순서를 씁니다.
+    img_bgr = img_np[..., ::-1]
+
+    # 3. Scale to 16-bit Integer
+    img_uint16 = (img_bgr * 65535.0).astype(np.uint16)
+
+    # 4. Encode to PNG using OpenCV
+    # Pillow나 imageio는 16-bit RGB 저장을 제대로 지원하지 않아 에러가 나지만,
+    # OpenCV의 imencode는 이를 완벽하게 지원합니다.
+    is_success, buffer = cv2.imencode(".png", img_uint16)
+
+    if not is_success:
+        return None
+
+    # 5. Return as BytesIO
+    return io.BytesIO(buffer)
 
 
 # -----------------------------------------------------------------------------

@@ -4,12 +4,13 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 import imageio.v3 as iio
+import cv2  # [수정] 16-bit PNG 저장을 위해 OpenCV 추가
 
 # Local Modules
 from config import Config
 from core.net import BakeNet
 from core.palette import Palette
-from utils import get_logger  # 로거 임포트
+from utils import get_logger
 
 
 def auto_detect_bit_depth(img_np):
@@ -26,6 +27,7 @@ def auto_detect_bit_depth(img_np):
 
 def load_image_to_tensor(path, device, logger, input_bit_depth=None):
     try:
+        # 읽기는 imageio가 다양한 포맷(DPX, TIFF 등)을 잘 지원하므로 유지
         img_np = iio.imread(path)
     except Exception as e:
         logger.error(f"Error reading {path}: {e}")
@@ -42,7 +44,6 @@ def load_image_to_tensor(path, device, logger, input_bit_depth=None):
             depth = input_bit_depth
             normalization_scale = (2**depth) - 1
             detected_depth = depth
-            # logger.info는 루프에서 너무 많이 찍힐 수 있으므로 상위에서 처리
         else:
             depth = auto_detect_bit_depth(img_np)
             normalization_scale = (2**depth) - 1
@@ -59,10 +60,23 @@ def load_image_to_tensor(path, device, logger, input_bit_depth=None):
 
 
 def save_tensor_to_16bit_png(tensor, path):
+    """
+    [수정] imageio 대신 OpenCV를 사용하여 16-bit PNG 저장
+    """
     tensor = tensor.detach().cpu().clamp(0.0, 1.0)
+
+    # (1, 3, H, W) -> (H, W, 3)
     img_np = tensor.squeeze(0).permute(1, 2, 0).numpy()
+
+    # Scale to 16-bit
     img_uint16 = (img_np * 65535.0).astype(np.uint16)
-    iio.imwrite(path, img_uint16)
+
+    # RGB -> BGR (OpenCV는 BGR 순서를 사용하므로 변환 필요)
+    img_bgr = img_uint16[..., ::-1]
+
+    # Save using OpenCV
+    # Pillow/imageio는 16-bit RGB 저장을 지원하지 않아 여기서 에러가 났었습니다.
+    cv2.imwrite(path, img_bgr)
 
 
 def pad_image(tensor):
@@ -81,8 +95,8 @@ def unpad_image(tensor, original_size):
 
 def inference(args):
     # 1. Setup Logger
-    Config.create_directories()  # logs 폴더 생성 보장
-    logger = get_logger(Config.LOG_DIR, "inference.log")  # inference.log 사용
+    Config.create_directories()
+    logger = get_logger(Config.LOG_DIR, "inference.log")
 
     device = (
         torch.device(Config.DEVICE)
@@ -103,13 +117,21 @@ def inference(args):
         logger.error(f"Checkpoint not found at {args.checkpoint}")
         return
 
-    checkpoint = torch.load(args.checkpoint, map_location=device)
-    if "ema_shadow" in checkpoint:
-        logger.info("Loading EMA weights (Preferred)...")
-        model.load_state_dict(checkpoint["ema_shadow"])
-    else:
-        logger.info("Loading standard weights...")
-        model.load_state_dict(checkpoint["model_state_dict"])
+    try:
+        checkpoint = torch.load(args.checkpoint, map_location=device)
+
+        # [수정] strict=False 적용하여 로딩 유연성 확보
+        if "ema_shadow" in checkpoint:
+            logger.info("Loading EMA weights (Preferred)...")
+            model.load_state_dict(checkpoint["ema_shadow"], strict=False)
+        else:
+            logger.info("Loading standard weights...")
+            model.load_state_dict(checkpoint["model_state_dict"], strict=False)
+
+    except Exception as e:
+        logger.error(f"Failed to load checkpoint: {e}")
+        return
+
     model.eval()
 
     # 4. Process Images
