@@ -3,7 +3,6 @@ import argparse
 import torch
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from torchvision.utils import save_image
 from torch.optim.lr_scheduler import SequentialLR, LinearLR, ExponentialLR
 
 # Local Modules
@@ -12,14 +11,12 @@ from data.dataset import DIV2KDataset
 from core.net import BakeNet
 from core.loss import BakeLoss
 from core.palette import Palette
-from core.augment import BakeAugment  # [NEW] GPU Augmentation Module
+from core.augment import BakeAugment
 from utils import (
     seed_everything,
     get_logger,
     ModelEMA,
     save_checkpoint,
-    compute_delta_e,
-    quantize_validation,
     prepare_div2k_dataset,
 )
 
@@ -42,40 +39,30 @@ def train(args):
     prepare_div2k_dataset(Config, logger)
 
     # 2. Dataset & Loader
-    # dataset.py 수정으로 인해 이제 CPU 부하가 매우 적습니다.
     logger.info("Loading Datasets...")
     train_dataset = DIV2KDataset(Config, is_train=True)
-    valid_dataset = DIV2KDataset(Config, is_train=False)
+    # Valid Dataset 및 Loader 제거됨
 
     train_loader = DataLoader(
         train_dataset,
-        batch_size=Config.BATCH_SIZE,  # Config에서 4~8로 늘리는 것을 권장
+        batch_size=Config.BATCH_SIZE,
         shuffle=True,
         num_workers=Config.NUM_WORKERS,
         pin_memory=True,
         persistent_workers=True,
     )
 
-    valid_loader = DataLoader(
-        valid_dataset,
-        batch_size=1,
-        shuffle=False,
-        num_workers=Config.NUM_WORKERS,
-        pin_memory=True,
-    )
-
     # 3. Model & Components
     logger.info(f"Initializing BakeNet (Dim: {Config.INTERNAL_DIM})...")
 
-    # [NEW] GPU Augmentor Initialize
-    # 학습 루프 내에서 고속 열화를 담당합니다.
+    # GPU Augmentation Module
     augmentor = BakeAugment().to(device)
 
     model = BakeNet(dim=Config.INTERNAL_DIM).to(device)
     criterion = BakeLoss().to(device)
 
     to_oklabp = Palette.sRGBtoOklabP().to(device)
-    to_rgb = Palette.OklabPtosRGB().to(device)
+    # to_rgb는 Loss 계산에 필요 없으므로 생략
 
     optimizer = optim.AdamW(
         model.parameters(), lr=Config.LEARNING_RATE, weight_decay=Config.WEIGHT_DECAY
@@ -102,7 +89,6 @@ def train(args):
     # [Resume Logic Control]
     # -------------------------------------------------------------------------
     start_epoch = 1
-    best_delta_e = 999.0
     ckpt_path = Config.LAST_CKPT_PATH
     should_load = False
 
@@ -125,7 +111,7 @@ def train(args):
         else:
             logger.info("✨ No checkpoint found. Starting fresh training...")
 
-    # Load Checkpoint if needed
+    # Load Checkpoint
     if should_load and os.path.exists(ckpt_path):
         ckpt = torch.load(ckpt_path, map_location=device)
         model.load_state_dict(ckpt["model_state_dict"])
@@ -140,20 +126,17 @@ def train(args):
         logger.info(f"✅ Successfully resumed from Epoch {start_epoch-1}.")
 
     # 4. Training Loop
-    logger.info(">>> Start Training Loop (GPU Accelerated) <<<")
+    logger.info(">>> Start Training Loop (No Validation Mode) <<<")
 
     for epoch in range(start_epoch, Config.TOTAL_EPOCHS + 1):
         model.train()
         epoch_loss = 0.0
 
-        # [Modified] clean_batch만 받습니다. (dataset.py가 Clean Tensor만 반환)
         for step, clean_batch in enumerate(train_loader, 1):
-
-            # 1. Move to GPU immediately
+            # 1. Move to GPU
             clean_batch = clean_batch.to(device)
 
             # 2. On-the-fly Degradation & Augmentation
-            # GPU 상에서 즉시 열화 이미지를 생성합니다.
             with torch.no_grad():
                 input_rgb, target_rgb = augmentor(clean_batch)
 
@@ -167,7 +150,7 @@ def train(args):
             # 5. Loss
             loss = criterion(pred_oklabp, target_oklabp)
 
-            # Safety
+            # Safety Check
             if torch.isnan(loss):
                 logger.error(
                     f"[CRITICAL] NaN Loss at Epoch {epoch} Step {step}. Skipping."
@@ -198,65 +181,19 @@ def train(args):
         avg_loss = epoch_loss / len(train_loader)
         logger.info(f"==> Epoch {epoch} Finished. Avg Loss: {avg_loss:.6f}")
 
-        # 5. Validation Loop
+        # 5. Checkpoint Update (Validation 없이 저장만 수행)
         if epoch % Config.VALID_INTERVAL_EPOCHS == 0:
-            logger.info(f"==> Validating at Epoch {epoch}...")
+            logger.info(f"💾 Saving Checkpoint at Epoch {epoch}...")
 
+            # EMA 가중치를 적용한 상태로 저장 (Inference 성능 확보)
             model_ema.apply_shadow(model)
-            model.eval()
 
-            total_delta_e = 0.0
-            num_samples = 0
-            vis_input, vis_pred, vis_target = None, None, None
-
-            with torch.no_grad():
-                # [Modified] Validation Loader도 Clean Tensor 하나만 반환합니다.
-                for v_step, v_tgt_rgb in enumerate(valid_loader):
-                    v_tgt_rgb = v_tgt_rgb.to(device)
-
-                    # Validation은 고정된 4-bit 열화를 적용 (일관된 평가를 위해)
-                    v_clean_rgb = v_tgt_rgb  # 원본
-                    v_in_rgb = quantize_validation(
-                        v_clean_rgb, bit_depth=4, jpeg_quality=40
-                    )
-
-                    v_in_oklabp = to_oklabp(v_in_rgb)
-                    v_tgt_oklabp = to_oklabp(v_tgt_rgb)
-
-                    v_pred_oklabp = model(v_in_oklabp)
-
-                    batch_delta_e = compute_delta_e(v_pred_oklabp, v_tgt_oklabp)
-                    total_delta_e += batch_delta_e.item()
-                    num_samples += 1
-
-                    if v_step == 0:
-                        v_pred_rgb = to_rgb(v_pred_oklabp)
-                        vis_input = v_in_rgb
-                        vis_target = v_tgt_rgb
-                        vis_pred = v_pred_rgb.clamp(0, 1)
-
-            avg_delta_e = total_delta_e / num_samples
-            logger.info(
-                f"==> Validation Result - Delta E: {avg_delta_e:.4f} (Lower is Better)"
-            )
-
-            is_best = avg_delta_e < best_delta_e
-            if is_best:
-                best_delta_e = avg_delta_e
-                logger.info(f"🏆 New Best Record! Delta E: {best_delta_e:.4f}")
-
+            # is_best=False로 설정하여 best.pth 생성 방지
             save_checkpoint(
-                Config, epoch, model, model_ema, optimizer, scheduler, is_best
+                Config, epoch, model, model_ema, optimizer, scheduler, is_best=False
             )
 
-            if vis_input is not None:
-                combined = torch.cat([vis_input, vis_pred, vis_target], dim=3)
-                save_path = os.path.join(
-                    Config.RESULT_DIR, f"valid_epoch_{epoch:05d}.png"
-                )
-                save_image(combined, save_path)
-                logger.info(f"Visualization saved.")
-
+            # 다음 학습을 위해 모델 가중치 복원
             model_ema.restore(model)
 
     logger.info("Training Finished.")
@@ -265,7 +202,6 @@ def train(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Bake v4 Training Script")
 
-    # 상호 배타적 옵션 그룹 (둘 중 하나만 사용 가능)
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
         "--resume", action="store_true", help="Force resume from the last checkpoint."
