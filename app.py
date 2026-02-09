@@ -113,7 +113,7 @@ model, to_oklabp, to_rgb, device = load_model()
 def process_image(uploaded_file, bit_depth_option, model, to_oklabp, to_rgb, device):
     """
     [Inference Pipeline]
-    Load -> Normalize -> Upscale(x2 Nearest) -> Pad -> BakeNet -> Unpad -> Output
+    Load -> Normalize -> Upscale(x2 Bilinear) -> Pad -> BakeNet -> Unpad -> Output
     """
     bytes_data = uploaded_file.getvalue()
     filename = uploaded_file.name
@@ -167,7 +167,7 @@ def process_image(uploaded_file, bit_depth_option, model, to_oklabp, to_rgb, dev
     input_tensor = input_tensor.clamp(0.0, 1.0)
 
     # -------------------------------------------------------------------------
-    # [Upscaling] x2 Nearest Neighbor
+    # [Upscaling] x2 Bilinear
     # -------------------------------------------------------------------------
     # BakeNet 입력 전에 2배 확대를 수행하여, 결과물 해상도도 2배가 되도록 함.
     input_tensor = F.interpolate(input_tensor, scale_factor=2, mode="bilinear")
@@ -335,7 +335,7 @@ if uploaded_file is not None:
                     st.download_button(
                         label="⬇️ Download Input",
                         data=to_download_bytes(input_t),
-                        file_name="bake_input_nearest_16bit.png",
+                        file_name="bake_input_bilinear_16bit.png",
                         mime="image/png",
                         use_container_width=True,
                     )
@@ -343,7 +343,7 @@ if uploaded_file is not None:
                 with col3:
                     st.info(
                         "**Professional Export:** Both files are **16-bit PNGs** (x2 Upscaled). "
-                        "'Input' is Nearest-Neighbor scaled, 'Output' is BakeNet restored."
+                        "'Input' is Bilinear scaled, 'Output' is BakeNet restored."
                     )
 
             else:

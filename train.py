@@ -185,16 +185,10 @@ def train(args):
         if epoch % Config.VALID_INTERVAL_EPOCHS == 0:
             logger.info(f"💾 Saving Checkpoint at Epoch {epoch}...")
 
-            # EMA 가중치를 적용한 상태로 저장 (Inference 성능 확보)
-            model_ema.apply_shadow(model)
-
             # is_best=False로 설정하여 best.pth 생성 방지
             save_checkpoint(
                 Config, epoch, model, model_ema, optimizer, scheduler, is_best=False
             )
-
-            # 다음 학습을 위해 모델 가중치 복원
-            model_ema.restore(model)
 
     logger.info("Training Finished.")
 
