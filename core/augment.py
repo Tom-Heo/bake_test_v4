@@ -59,7 +59,7 @@ class BakeAugment(nn.Module):
         b = y + 1.772 * cb
         return torch.stack([r, g, b], dim=1)
 
-    def apply_jpeg(self, x, quality_range=(30, 90)):
+    def apply_jpeg(self, x, quality_range=(20, 80)):
         """Differentiable JPEG Artifact Simulator"""
         B, C, H, W = x.shape
 
@@ -133,18 +133,18 @@ class BakeAugment(nn.Module):
         steps = (2**bit_depth) - 1
 
         # Dithering (Noise Injection before quant)
-        if random.random() < 0.5:
+        if random.random() < 0.9:
             noise = (torch.rand_like(input_t) - 0.5) / steps
             input_t = input_t + noise
 
         input_t = torch.round(input_t * steps) / steps
 
-        # 2. JPEG Compression (50% Chance)
-        if random.random() < 0.5:
+        # 2. JPEG Compression (90% Chance)
+        if random.random() < 0.9:
             input_t = self.apply_jpeg(input_t)
 
         # 3. Gaussian Noise (Texture)
-        if random.random() < 0.5:
+        if random.random() < 0.9:
             sigma = random.uniform(0.005, 0.02)
             input_t = input_t + torch.randn_like(input_t) * sigma
 
@@ -152,14 +152,14 @@ class BakeAugment(nn.Module):
 
         # --- [Color Augmentation] ---
         # 1. RGB Shift (White Balance)
-        if random.random() < 0.5:
+        if random.random() < 0.9:
             shift = torch.randn(1, 3, 1, 1, device=x.device) * 0.05
             input_t = input_t + shift
             target = target + shift
 
         # 2. Gamma (Curve)
-        if random.random() < 0.8:
-            gamma = random.uniform(0.8, 1.2)
+        if random.random() < 0.9:
+            gamma = random.uniform(0.7, 1.3)
             input_t = input_t.clamp(1e-8, 1.0) ** gamma
             target = target.clamp(1e-8, 1.0) ** gamma
 
