@@ -45,7 +45,7 @@ def _ycbcr_to_rgb(x):
 
 
 def quantize_validation(
-    tensor: torch.Tensor, bit_depth: int = 4, jpeg_quality: int = None
+    tensor: torch.Tensor, bit_depth: int = 4, jpeg_quality: int = 40
 ) -> torch.Tensor:
     """
     [Validation Degradation]

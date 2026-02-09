@@ -216,7 +216,9 @@ def train(args):
 
                     # Validation은 고정된 4-bit 열화를 적용 (일관된 평가를 위해)
                     v_clean_rgb = v_tgt_rgb  # 원본
-                    v_in_rgb = quantize_validation(v_clean_rgb, bit_depth=4)
+                    v_in_rgb = quantize_validation(
+                        v_clean_rgb, bit_depth=4, jpeg_quality=40
+                    )
 
                     v_in_oklabp = to_oklabp(v_in_rgb)
                     v_tgt_oklabp = to_oklabp(v_tgt_rgb)
