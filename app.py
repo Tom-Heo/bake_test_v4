@@ -172,15 +172,9 @@ def process_image(uploaded_file, bit_depth_option, model, to_oklabp, to_rgb, dev
     input_tensor = input_tensor.clamp(0.0, 1.0)
 
     # -------------------------------------------------------------------------
-    # [Upscaling] x2 Bilinear
-    # -------------------------------------------------------------------------
-    # BakeNet 입력 전에 2배 확대를 수행하여, 결과물 해상도도 2배가 되도록 함.
-    input_tensor = F.interpolate(input_tensor, scale_factor=2, mode="bilinear")
-    detected_msg += " | x2 Upscaled"
-    # -------------------------------------------------------------------------
 
     # 3. Padding (Reflect for even dims)
-    # Upscaling 이후의 해상도를 기준으로 패딩 계산
+    # 해상도를 기준으로 패딩 계산
     _, _, h, w = input_tensor.shape
     pad_h = 1 if (h % 2 != 0) else 0
     pad_w = 1 if (w % 2 != 0) else 0
@@ -200,7 +194,7 @@ def process_image(uploaded_file, bit_depth_option, model, to_oklabp, to_rgb, dev
     # 패딩된 부분 잘라내기
     output_rgb = output_rgb[:, :, :h, :w].clamp(0.0, 1.0)
 
-    # input_tensor 역시 2배 확대된 상태로 반환하여 비교 슬라이더의 1:1 매칭 보장
+    # 비교 슬라이더의 1:1 매칭 보장
     return input_tensor.cpu(), output_rgb.cpu(), detected_msg
 
 
