@@ -170,7 +170,7 @@ def process_image(uploaded_file, bit_depth_option, model, to_oklabp, to_rgb, dev
     # [Upscaling] x2 Nearest Neighbor
     # -------------------------------------------------------------------------
     # BakeNet 입력 전에 2배 확대를 수행하여, 결과물 해상도도 2배가 되도록 함.
-    input_tensor = F.interpolate(input_tensor, scale_factor=2, mode="nearest")
+    input_tensor = F.interpolate(input_tensor, scale_factor=2, mode="bilinear")
     detected_msg += " | x2 Upscaled"
     # -------------------------------------------------------------------------
 
@@ -305,7 +305,7 @@ if uploaded_file is not None:
                 image_comparison(
                     img1=img_before,
                     img2=img_after,
-                    label1="Original (x2 Nearest)",
+                    label1="Original (x2 Bilinear)",
                     label2="Baked (Restored)",
                     width=700,
                     starting_position=50,
