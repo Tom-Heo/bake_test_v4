@@ -160,7 +160,7 @@ class BakeAugment(nn.Module):
         input_t = torch.round(input_t * steps) / steps
 
         # 2. Downscale & Upscale (Bilinear)
-        if random.random() < 0.5:  # 50% 확률로 적용
+        if random.random() < 0.9:  # 90% 확률로 적용
             orig_h, orig_w = input_t.shape[2], input_t.shape[3]
             # 반으로 줄이고 (Bilinear)
             scaled = F.interpolate(
@@ -177,7 +177,7 @@ class BakeAugment(nn.Module):
 
         # 4. Gaussian Noise (Texture)
         if random.random() < 0.9:
-            sigma = random.uniform(0.02, 0.04)
+            sigma = random.uniform(0.04, 0.05)
             input_t = input_t + torch.randn_like(input_t) * sigma
 
         input_t = input_t.clamp(0, 1)
