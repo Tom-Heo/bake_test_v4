@@ -59,7 +59,7 @@ class BakeAugment(nn.Module):
         b = y + 1.772 * cb
         return torch.stack([r, g, b], dim=1)
 
-    def apply_jpeg(self, x, quality_range=(20, 40)):
+    def apply_jpeg(self, x, quality_range=(10, 20)):
         """Differentiable JPEG Artifact Simulator"""
         B, C, H, W = x.shape
 
@@ -149,7 +149,7 @@ class BakeAugment(nn.Module):
         # --- [Degradation Pipeline] ---
 
         # 1. Quantization (Bit-depth Reduction)
-        bit_depth = random.choice([4, 5, 6])
+        bit_depth = random.choice([4, 5])
         steps = (2**bit_depth) - 1
 
         # Dithering (Noise Injection before quant)
@@ -165,7 +165,7 @@ class BakeAugment(nn.Module):
 
         # 3. Gaussian Noise (Texture)
         if random.random() < 0.9:
-            sigma = random.uniform(0.005, 0.02)
+            sigma = random.uniform(0.02, 0.04)
             input_t = input_t + torch.randn_like(input_t) * sigma
 
         input_t = input_t.clamp(0, 1)
