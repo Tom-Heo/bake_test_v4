@@ -159,11 +159,23 @@ class BakeAugment(nn.Module):
 
         input_t = torch.round(input_t * steps) / steps
 
-        # 2. JPEG Compression (90% Chance)
+        # 2. Downscale & Upscale (Bilinear)
+        if random.random() < 0.5:  # 50% 확률로 적용
+            orig_h, orig_w = input_t.shape[2], input_t.shape[3]
+            # 반으로 줄이고 (Bilinear)
+            scaled = F.interpolate(
+                input_t, scale_factor=0.5, mode="bilinear", align_corners=False
+            )
+            # 다시 원래 크기로 늘림 (Bilinear)
+            input_t = F.interpolate(
+                scaled, size=(orig_h, orig_w), mode="bilinear", align_corners=False
+            )
+
+        # 3. JPEG Compression (90% Chance)
         if random.random() < 0.9:
             input_t = self.apply_jpeg(input_t)
 
-        # 3. Gaussian Noise (Texture)
+        # 4. Gaussian Noise (Texture)
         if random.random() < 0.9:
             sigma = random.uniform(0.02, 0.04)
             input_t = input_t + torch.randn_like(input_t) * sigma
